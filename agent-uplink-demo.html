@@ -1,0 +1,719 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Agent Uplink</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap">
+<style>
+  :root{
+    --bg: #14102b;
+    --bg-raised: #1f1a3d;
+    --grid: #362d63;
+    --amber: #ffb347;
+    --amber-dim: #a9772f;
+    --cyan: #5eead4;
+    --cyan-dim: #2f7d70;
+    --magenta: #ff5da2;
+    --dim: #9088b8;
+    --white: #f5f0ff;
+    color-scheme: dark;
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    background: var(--bg);
+    color: var(--white);
+    font-family: "VT323", ui-monospace, "Courier New", monospace;
+    padding-inline: 16px;
+    padding-block: 20px;
+    min-height: 100%;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  .display{
+    font-family: "Press Start 2P", "VT323", monospace;
+  }
+
+  /* subtle CRT scanline + vignette, decorative only */
+  .crt-overlay{
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 50;
+    background:
+      repeating-linear-gradient(
+        to bottom,
+        rgba(0,0,0,0.16) 0px,
+        rgba(0,0,0,0.16) 1px,
+        transparent 1px,
+        transparent 3px
+      ),
+      radial-gradient(ellipse at 50% 40%, rgba(20,16,43,0) 55%, rgba(10,8,24,0.55) 100%);
+    mix-blend-mode: normal;
+  }
+
+  .wrap{
+    max-width: 1080px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* ---------- HUD ---------- */
+  .hud{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 20px;
+    border: 3px solid var(--grid);
+    background: var(--bg-raised);
+    padding: 12px 16px;
+  }
+
+  .hud-title{
+    font-size: 15px;
+    letter-spacing: 1px;
+    color: var(--cyan);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-shadow: 0 0 6px rgba(94,234,212,0.45);
+  }
+
+  .blink-cursor{
+    animation: blink 1s steps(1) infinite;
+    color: var(--amber);
+  }
+
+  @keyframes blink{ 50%{ opacity: 0; } }
+
+  .hud-stats{
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 18px;
+  }
+
+  .hud-stats .label{ color: var(--dim); }
+  .ok{ color: var(--cyan); }
+
+  .pixel-btn{
+    font-family: "VT323", monospace;
+    font-size: 16px;
+    letter-spacing: .5px;
+    background: var(--bg);
+    color: var(--amber);
+    border: 2px solid var(--amber-dim);
+    padding: 6px 12px;
+    cursor: pointer;
+    clip-path: polygon(0 6px,6px 6px,6px 0,calc(100% - 6px) 0,calc(100% - 6px) 6px,100% 6px,100% calc(100% - 6px),calc(100% - 6px) calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,6px calc(100% - 6px),0 calc(100% - 6px));
+  }
+  .pixel-btn:hover{ background: var(--grid); }
+  .pixel-btn:focus-visible{ outline: 2px solid var(--white); outline-offset: 2px; }
+  .pixel-btn[aria-pressed="true"]{ color: var(--cyan); border-color: var(--cyan-dim); }
+
+  /* ---------- layout ---------- */
+  .stage{
+    display: grid;
+    grid-template-columns: minmax(0,1.6fr) minmax(240px, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+
+  @media (max-width: 720px){
+    .stage{ grid-template-columns: 1fr; }
+  }
+
+  .pixel-panel{
+    border: 3px solid var(--grid);
+    background: var(--bg-raised);
+    clip-path: polygon(0 10px,10px 10px,10px 0,calc(100% - 10px) 0,calc(100% - 10px) 10px,100% 10px,100% calc(100% - 10px),calc(100% - 10px) calc(100% - 10px),calc(100% - 10px) 100%,10px 100%,10px calc(100% - 10px),0 calc(100% - 10px));
+  }
+
+  .map-panel{
+    position: relative;
+    padding: 10px;
+  }
+
+  #net-canvas{
+    display: block;
+    width: 100%;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .map-hint{
+    font-size: 15px;
+    color: var(--dim);
+    text-align: center;
+    padding-top: 6px;
+  }
+
+  .boot-overlay{
+    position: absolute;
+    inset: 10px;
+    background: var(--bg-raised);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    transition: opacity .5s ease;
+  }
+  .boot-overlay.hidden{ opacity: 0; pointer-events: none; }
+
+  #boot-text{
+    margin: 0;
+    font-family: "VT323", monospace;
+    font-size: 18px;
+    color: var(--cyan);
+    white-space: pre-wrap;
+  }
+
+  .side{
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* ---------- detail panel ---------- */
+  .detail-panel{
+    padding: 14px 16px;
+    min-height: 190px;
+  }
+
+  .panel-label{
+    font-family: "Press Start 2P", monospace;
+    font-size: 10px;
+    color: var(--amber);
+    letter-spacing: 1px;
+    margin: 0 0 10px;
+  }
+
+  .detail-name{
+    font-size: 24px;
+    color: var(--white);
+    line-height: 1;
+    margin-bottom: 8px;
+    word-break: break-word;
+  }
+
+  .status-pill{
+    display: inline-block;
+    font-family: "Press Start 2P", monospace;
+    font-size: 9px;
+    letter-spacing: 1px;
+    padding: 5px 8px;
+    margin-bottom: 12px;
+    border: 2px solid currentColor;
+  }
+  .status-working{ color: var(--cyan); }
+  .status-idle{ color: var(--amber); }
+  .status-offline{ color: var(--magenta); }
+
+  .detail-row{
+    display: flex;
+    gap: 8px;
+    font-size: 17px;
+    padding-block: 3px;
+    border-bottom: 1px dashed var(--grid);
+  }
+  .detail-row:last-child{ border-bottom: none; }
+  .detail-row .k{ color: var(--dim); min-width: 84px; flex-shrink: 0; }
+  .detail-row .v{ color: var(--white); font-variant-numeric: tabular-nums; }
+
+  /* ---------- log panel ---------- */
+  .log-panel{ padding: 14px 16px; }
+
+  .log-list{
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 15px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .log-list li{
+    color: var(--dim);
+    border-left: 3px solid var(--grid);
+    padding-left: 8px;
+  }
+  .log-list li .t{ color: var(--amber-dim); }
+  .log-list li.working .t{ color: var(--cyan-dim); }
+
+  .foot-note{
+    text-align: center;
+    font-size: 14px;
+    color: var(--dim);
+    letter-spacing: .5px;
+    padding-top: 4px;
+  }
+
+  .sr-only{
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .blink-cursor{ animation: none; }
+    .boot-overlay{ transition: none; }
+  }
+</style>
+
+<div class="crt-overlay" aria-hidden="true"></div>
+
+<div class="wrap">
+  <header class="hud">
+    <div class="hud-title display">
+      <span class="blink-cursor">▮</span> AGENT UPLINK
+    </div>
+    <div class="hud-stats">
+      <span><span class="label">ONLINE</span> <span id="stat-online" class="ok">6/7</span></span>
+      <span><span class="label">LINK</span> <span class="ok">ACTIVE</span></span>
+      <button id="sfx-toggle" class="pixel-btn" type="button" aria-pressed="false">SFX: OFF</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div class="pixel-panel map-panel">
+      <canvas id="net-canvas" width="640" height="400" role="img" aria-label="Network map of Claude agents. Use the list below to browse agents by keyboard."></canvas>
+      <div class="boot-overlay" id="boot-overlay" aria-hidden="true">
+        <pre id="boot-text" class="display" style="font-size:12px; line-height:1.7;"></pre>
+      </div>
+      <p class="map-hint">CLICK A NODE FOR STATUS</p>
+    </div>
+
+    <div class="side">
+      <section class="pixel-panel detail-panel" id="detail-panel" aria-live="polite">
+        <!-- populated by script -->
+      </section>
+
+      <section class="pixel-panel log-panel">
+        <h2 class="panel-label">SYSTEM LOG</h2>
+        <ul class="log-list" id="log-list"></ul>
+      </section>
+    </div>
+  </main>
+
+  <nav class="sr-only" aria-label="Agents">
+    <ul id="agent-textlist"></ul>
+  </nav>
+
+  <p class="foot-note">SIMULATED DATA · WIRE UP A REAL AGENT FEED TO REPLACE IT</p>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var COLORS = {
+    working: '#5eead4',
+    idle: '#ffb347',
+    offline: '#ff5da2',
+    dim: '#9088b8',
+    dark: '#14102b',
+    white: '#f5f0ff'
+  };
+
+  var BOT_BITMAP = [
+    [0,0,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,0],
+    [1,1,2,1,1,2,1,1],
+    [1,1,1,1,1,1,1,1],
+    [1,1,1,3,3,1,1,1],
+    [0,1,1,1,1,1,1,0],
+    [0,0,1,0,0,1,0,0],
+    [0,0,1,0,0,1,0,0]
+  ];
+
+  var HUB_BITMAP = [
+    [0,1,1,1,1,1,1,0],
+    [1,1,1,1,1,1,1,1],
+    [1,2,1,1,1,1,2,1],
+    [1,1,1,1,1,1,1,1],
+    [1,2,1,1,1,1,2,1],
+    [1,1,1,1,1,1,1,1],
+    [1,2,1,1,1,1,2,1],
+    [1,1,1,1,1,1,1,1],
+    [0,1,1,1,1,1,1,0]
+  ];
+
+  function now(){ return Date.now(); }
+
+  function makeAgent(id, name, task, status, offsetMinutes){
+    return {
+      id: id,
+      kind: 'agent',
+      name: name,
+      task: task,
+      status: status,
+      addr: '10.0.' + (10 + id) + '.' + (20 + id * 3) + ':CLD',
+      since: now() - offsetMinutes * 60000,
+      x: 0, y: 0, hitRadius: 26,
+      packetT: Math.random(),
+      flicker: 1
+    };
+  }
+
+  var AGENTS = [
+    makeAgent(1, 'CODE-FORGE', 'Refactoring auth module', 'working', 14),
+    makeAgent(2, 'RESEARCH-01', 'Awaiting next query', 'idle', 42),
+    makeAgent(3, 'DATA-SCOUT', 'Crawling docs.claude.com', 'working', 7),
+    makeAgent(4, 'REVIEW-BOT', 'Reviewing PR #482', 'working', 3),
+    makeAgent(5, 'PLANNER-X', 'Standing by for task assignment', 'idle', 65),
+    makeAgent(6, 'TEST-RUNNER', 'Running regression suite', 'working', 1),
+    makeAgent(7, 'WATCHDOG', 'Connection lost - retrying', 'offline', 20)
+  ];
+
+  var HUB = {
+    id: 0, kind: 'hub', name: 'NETWORK-HUB',
+    addr: '10.0.0.1:CLD', since: now() - 210 * 60000,
+    x: 0, y: 0, hitRadius: 30
+  };
+
+  var ALL_NODES = [HUB].concat(AGENTS);
+
+  var canvas = document.getElementById('net-canvas');
+  var ctx = canvas.getContext('2d');
+  var mapPanel = document.querySelector('.map-panel');
+  var bootOverlay = document.getElementById('boot-overlay');
+  var bootText = document.getElementById('boot-text');
+  var detailPanel = document.getElementById('detail-panel');
+  var logList = document.getElementById('log-list');
+  var statOnline = document.getElementById('stat-online');
+  var sfxToggle = document.getElementById('sfx-toggle');
+  var agentTextList = document.getElementById('agent-textlist');
+
+  var selected = HUB;
+  var sfxOn = false;
+  var audioCtx = null;
+
+  function beep(freq, dur, type){
+    if(!sfxOn) return;
+    try{
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type || 'square';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + (dur || 0.07));
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + (dur || 0.07));
+    }catch(e){ /* audio unavailable, ignore */ }
+  }
+
+  sfxToggle.addEventListener('click', function(){
+    sfxOn = !sfxOn;
+    sfxToggle.setAttribute('aria-pressed', String(sfxOn));
+    sfxToggle.textContent = 'SFX: ' + (sfxOn ? 'ON' : 'OFF');
+    if(sfxOn) beep(660, 0.08, 'square');
+  });
+
+  function fmtClock(d){
+    var hh = String(d.getHours()).padStart(2,'0');
+    var mm = String(d.getMinutes()).padStart(2,'0');
+    var ss = String(d.getSeconds()).padStart(2,'0');
+    return hh + ':' + mm + ':' + ss;
+  }
+
+  function fmtUptime(sinceMs){
+    var s = Math.max(0, Math.floor((now() - sinceMs) / 1000));
+    var hh = Math.floor(s / 3600);
+    var mm = Math.floor((s % 3600) / 60);
+    var ss = s % 60;
+    return String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+  }
+
+  function pushLog(text, cls){
+    var li = document.createElement('li');
+    if(cls) li.className = cls;
+    var t = document.createElement('span');
+    t.className = 't';
+    t.textContent = '[' + fmtClock(new Date()) + '] ';
+    li.appendChild(t);
+    li.appendChild(document.createTextNode(text));
+    logList.insertBefore(li, logList.firstChild);
+    while(logList.children.length > 8){
+      logList.removeChild(logList.lastChild);
+    }
+  }
+
+  function updateOnlineStat(){
+    var online = AGENTS.filter(function(a){ return a.status !== 'offline'; }).length;
+    statOnline.textContent = online + '/' + AGENTS.length;
+  }
+
+  function renderTextList(){
+    agentTextList.innerHTML = '';
+    ALL_NODES.forEach(function(n){
+      var li = document.createElement('li');
+      var label = n.kind === 'hub' ? n.name + ' - network hub' : n.name + ' - ' + n.status + ' - ' + n.task;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = label;
+      btn.addEventListener('click', function(){ selectNode(n); });
+      li.appendChild(btn);
+      agentTextList.appendChild(li);
+    });
+  }
+
+  function renderDetail(){
+    var n = selected;
+    var html = '';
+    html += '<h2 class="panel-label">' + (n.kind === 'hub' ? 'NETWORK STATUS' : 'AGENT STATUS') + '</h2>';
+    html += '<div class="detail-name display" style="font-size:' + (n.kind === 'hub' ? '17px' : '22px') + '">' + n.name + '</div>';
+
+    if(n.kind === 'hub'){
+      var online = AGENTS.filter(function(a){ return a.status !== 'offline'; }).length;
+      html += '<span class="status-pill status-working">ACTIVE</span>';
+      html += '<div class="detail-row"><span class="k">AGENTS</span><span class="v">' + AGENTS.length + ' total</span></div>';
+      html += '<div class="detail-row"><span class="k">ONLINE</span><span class="v">' + online + ' / ' + AGENTS.length + '</span></div>';
+      html += '<div class="detail-row"><span class="k">UPTIME</span><span class="v" id="detail-uptime">' + fmtUptime(n.since) + '</span></div>';
+      html += '<div class="detail-row"><span class="k">ADDRESS</span><span class="v">' + n.addr + '</span></div>';
+    } else {
+      html += '<span class="status-pill status-' + n.status + '">' + n.status.toUpperCase() + '</span>';
+      html += '<div class="detail-row"><span class="k">TASK</span><span class="v">' + n.task + '</span></div>';
+      html += '<div class="detail-row"><span class="k">UPTIME</span><span class="v" id="detail-uptime">' + fmtUptime(n.since) + '</span></div>';
+      html += '<div class="detail-row"><span class="k">ADDRESS</span><span class="v">' + n.addr + '</span></div>';
+    }
+    detailPanel.innerHTML = html;
+  }
+
+  function selectNode(n){
+    selected = n;
+    renderDetail();
+    beep(n.kind === 'hub' ? 300 : 520, 0.05, 'square');
+  }
+
+  setInterval(function(){
+    var el = document.getElementById('detail-uptime');
+    if(el) el.textContent = fmtUptime(selected.since);
+  }, 1000);
+
+  // ---------- canvas layout + drawing ----------
+
+  var dpr = Math.max(1, window.devicePixelRatio || 1);
+
+  function computeLayout(w, h){
+    HUB.x = w / 2; HUB.y = h / 2;
+    var radius = Math.min(w, h) * 0.36;
+    var n = AGENTS.length;
+    AGENTS.forEach(function(a, i){
+      var angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+      a.x = w / 2 + Math.cos(angle) * radius;
+      a.y = h / 2 + Math.sin(angle) * radius;
+    });
+  }
+
+  function resizeCanvas(){
+    var rect = mapPanel.getBoundingClientRect();
+    var cssW = Math.max(280, rect.width - 20);
+    var cssH = Math.round(cssW * 0.62);
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    computeLayout(cssW, cssH);
+  }
+
+  function drawSprite(bitmap, cx, cy, px, mainColor, blinkOn){
+    var rows = bitmap.length, cols = bitmap[0].length;
+    var x0 = cx - (cols * px) / 2;
+    var y0 = cy - (rows * px) / 2;
+    for(var r = 0; r < rows; r++){
+      for(var c = 0; c < cols; c++){
+        var v = bitmap[r][c];
+        if(v === 0) continue;
+        if(v === 1) ctx.fillStyle = mainColor;
+        else if(v === 2) ctx.fillStyle = blinkOn ? COLORS.white : COLORS.dark;
+        else ctx.fillStyle = COLORS.dark;
+        ctx.fillRect(Math.round(x0 + c * px), Math.round(y0 + r * px), px, px);
+      }
+    }
+  }
+
+  function drawPixelLine(x1, y1, x2, y2, color, alpha){
+    var dx = x2 - x1, dy = y2 - y1;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    var step = 7;
+    var count = Math.floor(dist / step);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha;
+    for(var i = 0; i < count; i++){
+      if(i % 2 === 0) continue;
+      var t = i / count;
+      var x = x1 + dx * t;
+      var y = y1 + dy * t;
+      ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  var lastT = null;
+
+  function draw(t){
+    var dt = lastT ? (t - lastT) / 1000 : 0;
+    lastT = t;
+
+    var w = canvas.width / dpr, h = canvas.height / dpr;
+    ctx.clearRect(0, 0, w, h);
+
+    // connections
+    AGENTS.forEach(function(a){
+      var alpha = a.status === 'offline' ? 0.15 : 0.5;
+      var color = a.status === 'working' ? COLORS.working : (a.status === 'offline' ? COLORS.offline : COLORS.dim);
+      drawPixelLine(HUB.x, HUB.y, a.x, a.y, color, alpha);
+
+      if(a.status === 'working'){
+        if(!reduceMotion){
+          a.packetT += dt * 0.35;
+          if(a.packetT > 1) a.packetT -= 1;
+        }
+        var px = HUB.x + (a.x - HUB.x) * a.packetT;
+        var py = HUB.y + (a.y - HUB.y) * a.packetT;
+        ctx.fillStyle = COLORS.working;
+        ctx.fillRect(Math.round(px) - 3, Math.round(py) - 3, 6, 6);
+      }
+    });
+
+    var blinkOn = reduceMotion ? true : (Math.floor(t / 500) % 2 === 0);
+
+    // hub
+    drawSprite(HUB_BITMAP, HUB.x, HUB.y, 5, COLORS.dim, blinkOn);
+
+    // agents
+    AGENTS.forEach(function(a){
+      var color = a.status === 'working' ? COLORS.working : (a.status === 'idle' ? COLORS.idle : COLORS.offline);
+      var alpha = 1;
+      if(a.status === 'working' && !reduceMotion){
+        alpha = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(t / 220));
+      } else if(a.status === 'offline' && !reduceMotion){
+        alpha = 0.5 + 0.5 * Math.random();
+      }
+      ctx.globalAlpha = alpha;
+      drawSprite(BOT_BITMAP, a.x, a.y, 4, color, blinkOn);
+      ctx.globalAlpha = 1;
+
+      if(a === selected){
+        ctx.strokeStyle = COLORS.white;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(a.x - 20, a.y - 20, 40, 40);
+      }
+
+      ctx.font = '13px VT323, monospace';
+      ctx.fillStyle = COLORS.dim;
+      ctx.textAlign = 'center';
+      ctx.fillText(a.name, a.x, a.y + 32);
+    });
+
+    if(HUB === selected){
+      ctx.strokeStyle = COLORS.white;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(HUB.x - 24, HUB.y - 26, 48, 52);
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  canvas.addEventListener('click', function(e){
+    var rect = canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var y = e.clientY - rect.top;
+    var hit = null;
+    ALL_NODES.forEach(function(n){
+      var dx = x - n.x, dy = y - n.y;
+      if(dx * dx + dy * dy <= n.hitRadius * n.hitRadius) hit = n;
+    });
+    if(hit) selectNode(hit);
+  });
+
+  window.addEventListener('resize', function(){
+    resizeCanvas();
+  });
+
+  // ---------- boot sequence ----------
+
+  var bootLines = [
+    'INITIALIZING UPLINK...',
+    'AGENTS DETECTED: ' + AGENTS.length,
+    'LINK ESTABLISHED'
+  ];
+
+  function runBoot(cb){
+    if(reduceMotion){
+      bootOverlay.classList.add('hidden');
+      cb();
+      return;
+    }
+    var i = 0;
+    var text = '';
+    var timer = setInterval(function(){
+      if(i < bootLines.length){
+        text += bootLines[i] + '\n';
+        bootText.textContent = text;
+        i++;
+      } else {
+        clearInterval(timer);
+        setTimeout(function(){
+          bootOverlay.classList.add('hidden');
+          cb();
+        }, 350);
+      }
+    }, 420);
+  }
+
+  // ---------- simulated activity ----------
+
+  function randomStatusFlip(){
+    var candidates = AGENTS.filter(function(a){ return a.status !== 'offline'; });
+    if(candidates.length === 0) return;
+    var a = candidates[Math.floor(Math.random() * candidates.length)];
+    a.status = a.status === 'working' ? 'idle' : 'working';
+    var verb = a.status === 'working' ? 'started task: ' + a.task : 'went idle';
+    pushLog(a.name + ' → ' + verb, a.status === 'working' ? 'working' : '');
+    updateOnlineStat();
+    if(a === selected) renderDetail();
+  }
+
+  setInterval(randomStatusFlip, 5000);
+
+  // ---------- init ----------
+
+  function seedLog(){
+    pushLog('WATCHDOG lost connection, retrying', '');
+    pushLog('TEST-RUNNER started task: Running regression suite', 'working');
+    pushLog('REVIEW-BOT started task: Reviewing PR #482', 'working');
+  }
+
+  function init(){
+    resizeCanvas();
+    renderDetail();
+    renderTextList();
+    updateOnlineStat();
+    seedLog();
+    requestAnimationFrame(draw);
+    runBoot(function(){});
+  }
+
+  var fontsReady = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+  fontsReady.then(init, init);
+})();
+</script>
+
+</body></html>
